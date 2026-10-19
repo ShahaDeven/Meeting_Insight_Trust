@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.egg-info/
+
+# Secrets
+.env
+
+# Private context and outreach notes (never public)
+CLAUDE.md
+OUTREACH.md
+TESTING.md
+
+# Data: raw AMI audio/annotations and all intermediate outputs stay local.
+# Only small derived samples in data/samples/ are committed (CC BY 4.0, attributed).
+data/*
+!data/samples/
+!data/README.md
+
+# GPU pod working dirs and the outputs archive pulled back from RunPod
+gpu/out/
+gpu/audio/
+*.zip
+*.tar.gz
+
+# Report build artifacts (final charts in report/ are committed)
+report/_scratch/

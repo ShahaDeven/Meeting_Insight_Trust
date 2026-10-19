@@ -1,0 +1,4 @@
+* text=auto
+# Scripts that run on the Linux GPU pod must keep LF endings
+*.sh text eol=lf
+gpu/*.py text eol=lf

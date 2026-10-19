@@ -1,0 +1,57 @@
+"""Insight schema. Every insight must carry at least one supporting quote.
+
+Types map onto CRM-style properties so the auto-write vs review split reads like a real
+write policy. Sales methodologies (MEDDIC, BANT) extend this by adding types, not fields.
+"""
+
+from enum import StrEnum
+
+from pydantic import BaseModel, Field, model_validator
+
+from core.config import Condition
+
+
+class InsightType(StrEnum):
+    DECISION = "decision"
+    ACTION_ITEM = "action_item"
+    COST_FIGURE = "cost_figure"
+    OPEN_RISK = "open_risk"
+
+
+CRM_PROPERTY = {
+    InsightType.DECISION: "decisions",
+    InsightType.ACTION_ITEM: "next_steps",
+    InsightType.COST_FIGURE: "budget",
+    InsightType.OPEN_RISK: "risks",
+}
+
+
+class Quote(BaseModel):
+    text: str = Field(min_length=1)
+    speaker: str
+    start: float
+    end: float
+
+
+class Insight(BaseModel):
+    id: str
+    meeting_id: str
+    condition: Condition
+    type: InsightType
+    summary: str = Field(min_length=1)
+    owner: str | None = None     # AMI role for action items; None means unassigned
+    deadline: str | None = None  # as stated ("next meeting", "in 30 minutes")
+    value: str | None = None     # the figure for cost items, e.g. "12.50 EUR"
+    evidence: list[Quote] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _type_fields(self) -> "Insight":
+        if self.type == InsightType.COST_FIGURE and not self.value:
+            raise ValueError("cost_figure insights need a value")
+        if self.type != InsightType.ACTION_ITEM and (self.owner or self.deadline):
+            raise ValueError("owner/deadline only apply to action_item insights")
+        return self
+
+    @property
+    def crm_property(self) -> str:
+        return CRM_PROPERTY[self.type]

@@ -1,0 +1,30 @@
+[project]
+name = "meeting-insight-trust"
+version = "0.1.0"
+description = "Which meeting insights are safe to auto-write? Risk-gated extraction on real noisy meeting audio, with errors attributed to mishearing, speaker mix-ups, or the model."
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.107",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "jiwer>=3.0",
+    "scikit-learn>=1.4",
+    "xgboost>=2.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "matplotlib>=3.9"]
+app = ["streamlit>=1.38", "plotly>=5.20"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# gpu/ is a standalone script bundle for the RunPod pod and is not installed locally.
+[tool.setuptools]
+packages = ["core", "pipeline", "extract", "evals", "risk", "app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
