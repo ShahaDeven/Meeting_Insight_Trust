@@ -10,6 +10,7 @@ dependencies = [
     "numpy>=1.26",
     "pandas>=2.0",
     "jiwer>=3.0",
+    "num2words>=0.5",
     "scikit-learn>=1.4",
     "xgboost>=2.0",
 ]

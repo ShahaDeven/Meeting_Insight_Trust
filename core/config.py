@@ -12,7 +12,7 @@ load_dotenv(ROOT / ".env")
 DATA = ROOT / "data"
 AMI_RAW = DATA / "ami"            # official annotations zip, unpacked
 ASR_OUT = DATA / "asr"            # per-meeting JSON pulled back from the GPU pod
-TRANSCRIPTS = DATA / "transcripts"  # normalized JSONL transcripts, one file per meeting x condition
+TRANSCRIPTS = DATA / "transcripts"  # one Transcript JSON per meeting x condition (pipeline.build)
 INSIGHTS = DATA / "insights"
 RESULTS = DATA / "results"
 SAMPLES = DATA / "samples"        # small derived samples, committed
