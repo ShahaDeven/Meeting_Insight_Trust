@@ -58,3 +58,8 @@ MIC_FILES = {
 EXTRACT_MODEL = os.getenv("EXTRACT_MODEL", "claude-haiku-5-5")
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "claude-haiku-5-5")
 MAX_USD = float(os.getenv("MAX_USD", "10"))
+
+# $ per million tokens (input, output) for prompts up to 100K tokens; Haiku 5.5 is
+# (0.50, 2.50) above that. Used to enforce MAX_USD from each response's usage.
+PRICES = {"claude-haiku-5-5": (0.10, 0.50), "claude-sonnet-5-5": (2.00, 10.00),
+          "claude-opus-5-5": (4.00, 20.00)}

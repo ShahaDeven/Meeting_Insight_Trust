@@ -25,6 +25,16 @@ def roles(meeting_id: str) -> dict[str, str]:
     raise KeyError(f"{meeting_id} not in meetings.xml")
 
 
+def load_summary(meeting_id: str) -> dict[str, list[str]]:
+    """AMI abstractive summary: sentences under abstract / actions / decisions / problems.
+
+    Coarse gold: one sentence often bundles several decisions, and "NA" sections are empty.
+    """
+    root = ET.parse(MANUAL / "abstractive" / f"{meeting_id}.abssumm.xml").getroot()
+    return {section.tag: [s.text.strip() for s in section.iter("sentence") if s.text]
+            for section in root}
+
+
 def load_clean(meeting_id: str) -> Transcript:
     """One turn per AMI segment, speaker = role. Punctuation is attached to the word before it."""
     turns = []

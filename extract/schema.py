@@ -27,10 +27,11 @@ CRM_PROPERTY = {
 
 
 class Quote(BaseModel):
-    text: str = Field(min_length=1)
+    text: str = Field(min_length=1)  # the transcript's words, not the model's paraphrase
     speaker: str
     start: float
     end: float
+    match_score: float = 1.0         # how closely the model's quote matched the transcript
 
 
 class Insight(BaseModel):
@@ -43,6 +44,8 @@ class Insight(BaseModel):
     deadline: str | None = None  # as stated ("next meeting", "in 30 minutes")
     value: str | None = None     # the figure for cost items, e.g. "12.50 EUR"
     evidence: list[Quote] = Field(min_length=1)
+    model_confidence: int | None = None  # extractor's own 0-100 rating; a risk-model baseline
+    run: int = 0                 # repeat index; repeated CLEAN runs measure self-disagreement
 
     @model_validator(mode="after")
     def _type_fields(self) -> "Insight":
