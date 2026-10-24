@@ -76,6 +76,13 @@ def main() -> None:
     gold = json.loads(GOLD.read_text(encoding="utf-8"))
     budget, rows = Budget(), []
     for strategy in STRATEGIES:
+        # One matches file per strategy: a strategy is scored once, so adding a new
+        # strategy never re-scores (and re-randomizes) the earlier ones.
+        cached = RESULTS / f"memory_matches.{strategy}.jsonl"
+        if cached.exists():
+            rows += [json.loads(line) for line in cached.read_text(encoding="utf-8").splitlines()]
+            continue
+        first = len(rows)
         for series in PRIMARY_SERIES:
             g = [s for s in gold[series] if s["after"]["d"]]
             for cond in Condition:
@@ -91,6 +98,7 @@ def main() -> None:
                     f"{k}={sum(m['status'] == k for m in matches)}"
                     for k in ("correct", "stale", "wrong", "missing"))
                     + f" extra={extra} (total ${budget.spent:.3f})", flush=True)
+        write_jsonl(cached, rows[first:])
     write_jsonl(RESULTS / "memory_matches.jsonl", rows)
     df = pd.DataFrame(rows)
     table = (df.groupby(["strategy", "condition"]).status.value_counts(normalize=True)
@@ -103,6 +111,14 @@ def main() -> None:
     print(changed.groupby(["strategy", "condition"]).status.value_counts(normalize=True)
           .unstack(fill_value=0).reindex(columns=["correct", "stale", "wrong", "missing"])
           .map(lambda x: f"{x:.0%}").to_string())
+    queues = sorted((MEMORY / "gated_resummarize").glob("*.review.json"))
+    if queues:
+        load = pd.DataFrame([{"condition": q.name.split(".")[1], "meeting": q.name.split(".")[2],
+                              "queued": len(json.loads(q.read_text(encoding="utf-8")))}
+                             for q in queues])
+        print("\nGated re-summarize: changes sent to human review per meeting (mean over series):")
+        print(load.pivot_table(index="condition", columns="meeting", values="queued",
+                               aggfunc="mean").round(1).to_string())
     print(f"\nSpent ${budget.spent:.3f}.")
 
 

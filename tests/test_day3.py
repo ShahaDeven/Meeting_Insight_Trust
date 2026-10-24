@@ -46,3 +46,27 @@ def test_ladder_decomposition_shares_sum_to_one():
     assert d["farfield_mishearing_adds"] == pytest.approx(0.061)
     assert (d["farfield_share_model"] + d["farfield_share_speaker"]
             + d["farfield_share_mishearing"]) == pytest.approx(1.0)
+
+
+def test_gate_auto_writes_only_quote_backed_changes():
+    from core.config import Condition
+    from core.transcript import Transcript, Turn, Word
+    from extract.memory_strategies import _changes, _Check, apply_checks
+
+    words = [Word(text=w, start=i, end=i + 0.5) for i, w in enumerate("we will use kinetic charging".split())]
+    t = Transcript(meeting_id="m", condition=Condition.CLEAN,
+                   turns=[Turn(speaker="ID", start=0, end=5, words=words)])
+    prev = [Slot(slot="Power", category=D, value="rechargeable"),
+            Slot(slot="Colour", category=D, value="grey")]
+    proposed = [Slot(slot="Power", category=D, value="kinetic"),
+                Slot(slot="Case", category=D, value="rubber")]       # Colour removed
+    changes = _changes(prev, proposed)
+    assert [(n, old) for n, old, _ in changes] == [("Power", "rechargeable"), ("Case", None),
+                                                   ("Colour", "grey")]
+    checks = {1: _Check(change=1, supported=True, line=0, quote="use kinetic charging"),
+              2: _Check(change=2, supported=True, line=0, quote="the case is made of rubber"),
+              3: _Check(change=3, supported=False, line=None, quote=None)}
+    record, info = apply_checks(prev, changes, checks, t)
+    assert {s.slot: s.value for s in record} == {"Power": "kinetic", "Colour": "grey"}
+    assert (info["auto"], info["review"]) == (1, 2)
+    assert info["queue"][0]["verifier_said"] == "supported, quote not found"
