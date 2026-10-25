@@ -18,7 +18,6 @@ dependencies = [
 
 [dependency-groups]
 dev = ["pytest>=8", "matplotlib>=3.9"]
-app = ["streamlit>=1.38", "plotly>=5.20"]
 
 [build-system]
 requires = ["setuptools>=68"]
