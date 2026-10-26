@@ -79,6 +79,12 @@ function Item({ i, active, onPlay, onGo }: { i: Insight; active: boolean; onPlay
         </blockquote>
       ))}
       {i.why.length > 0 && (
+        <p className="why-head">
+          {i.lane === "review" ? "What pushed the risk up" : "What kept the risk down"}
+          <span> (↑ raises the risk, ↓ lowers it)</span>
+        </p>
+      )}
+      {i.why.length > 0 && (
         <ul className="why" aria-label={i.lane === "review" ? "Why it was held" : "Why it was written"}>
           {i.why.map((d, k) => (
             <li key={k}>
@@ -122,6 +128,20 @@ export default function Lanes({ insights, rejected, costs, active, onPlay, onGo 
     .map((t) => `${TYPE_LABEL[t].toLowerCase()} at ${Math.round(100 / costs[t])}%`).join(", ");
   return (
     <section className="panel" aria-label="Insights by write decision">
+      <details className="how-to-read">
+        <summary>How to read these cards</summary>
+        <ul>
+          <li><strong>Risk</strong> is the model’s estimate of the chance the insight is wrong, learned from meetings it
+            never saw.</li>
+          <li>The small tick on the risk bar is the <strong>review line</strong> for that kind of insight. It is lower for
+            costly mistakes: a wrong action item or cost figure is held at a lower risk than a wrong open risk.</li>
+          <li>Above the line, the insight is <strong>held for review</strong>; below it, it is <strong>written
+            automatically</strong>. With no supporting quote at all, it is <strong>rejected</strong>.</li>
+          <li>The ↑ and ↓ lines are the biggest reasons the risk came out where it did, each with its own number.</li>
+          <li><strong>Lands in</strong> shows where the write goes: meeting notes, tasks, the calendar or a record field.</li>
+          <li>“What an independent reviewer said” is a separate check against the human transcript, for comparison.</li>
+        </ul>
+      </details>
       {lanes.map(({ lane, title, note }) => {
         const items = insights.filter((i) => i.lane === lane).sort((a, b) => b.risk - a.risk);
         return (

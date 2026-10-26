@@ -296,3 +296,9 @@ table.log .go-cell .go + .go { margin-left: 6px; }
   .dest-grid { grid-template-columns: 1fr; }
   .header-controls { justify-items: start; }
 }
+
+.why-head { margin: 8px 0 2px; font-size: var(--s-1); font-weight: 600; color: var(--ink-2); }
+.why-head span { font-weight: 400; color: var(--ink-3); }
+details.how-to-read { padding: 10px 16px; border-bottom: 1px solid var(--rule); font-size: var(--s-1); color: var(--ink-2); }
+details.how-to-read summary { cursor: pointer; color: var(--focus); font-weight: 600; }
+details.how-to-read ul { margin: 8px 0 2px; padding-left: 18px; display: grid; gap: 4px; }

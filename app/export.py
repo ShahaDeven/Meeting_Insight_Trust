@@ -34,28 +34,6 @@ AUDIO = {"clean": ("Mix-Headset", "headset microphones"),
          "farfield": ("Array1-01", "one far-field room microphone")}
 SHOWN = ("clean", "farfield")
 
-# Numeric feature -> (phrase when above average, phrase when below average)
-PHRASES = {
-    "model_confidence": ("Extractor was confident", "Extractor was unsure"),
-    "hedges": ("Hedged wording ('maybe', 'I think')", "No hedged wording"),
-    "agrees": ("Explicit agreement words", "No explicit agreement words"),
-    "quote_conf_min": ("Recognizer confident in every quoted word", "Recognizer unsure of a quoted word"),
-    "quote_conf_mean": ("High recognizer confidence on the quote", "Low recognizer confidence on the quote"),
-    "quote_low_conf_share": ("Several low-confidence words in the quote", "Few low-confidence words"),
-    "meeting_conf_mean": ("Clean recording overall", "Noisy recording overall"),
-    "turns_nearby": ("Lively back-and-forth around the quote", "Few speaker turns around the quote"),
-    "speakers_nearby": ("Several people speaking around it", "Few people speaking around it"),
-    "quote_speakers": ("Quotes from several speakers", "Quotes from one speaker"),
-    "n_quotes": ("Several supporting quotes", "A single supporting quote"),
-    "quote_words": ("Long quote", "Short quote"),
-    "min_match_score": ("Quote matches the transcript exactly", "Quote only loosely matches the transcript"),
-    "has_value": ("Carries a figure", "No figure"),
-    "has_deadline": ("Carries a deadline", "No deadline"),
-}
-TYPE_PHRASE = {"action_item": "Action item", "decision": "Decision claim", "open_risk": "Open risk",
-               "cost_figure": "Cost figure"}
-
-
 def mmss(t: float) -> str:
     return f"{int(t // 60)}:{int(t % 60):02d}"
 
@@ -114,30 +92,69 @@ def explainer(features: pd.DataFrame):
     pipe = models()["logistic"].fit(train[cols], train.wrong)
     scaler, lr = pipe[0], pipe[-1]
 
+    # How often each kind of insight was wrong in the series the explainer was trained on, so a
+    # reason like "open risks are usually right" can say how right.
+    kinds = [c.removeprefix("type_") for c in cols if c.startswith("type_")]
+    rate = {k: float(train.loc[train[f"type_{k}"] == 1, "wrong"].mean()) for k in kinds}
+    overall = float(train.wrong.mean())
+    plural = {"action_item": "Action items", "decision": "Decisions", "cost_figure": "Cost figures",
+              "open_risk": "Open risks"}
+
+    def sentence(c: str, row: pd.Series) -> str | None:
+        """A self-contained reason, with the insight's own number in it."""
+        v = row[c]
+        n = int(round(v))
+        return {
+            "model_confidence": f"The extractor rated its own confidence {n}/100",
+            "hedges": "The quote hedges (“maybe”, “I think”)" if n else "The quote does not hedge",
+            "agrees": "The quote has agreement words (“let’s”, “decided”)" if n
+                      else "No agreement words in the quote (“let’s”, “decided”)",
+            "turns_nearby": f"{n} speaker turns in the 20 seconds around the quote",
+            "speakers_nearby": f"{n} {'person' if n == 1 else 'people'} spoke around this moment",
+            "quote_speakers": f"Its quotes come from {n} different {'speaker' if n == 1 else 'speakers'}",
+            "n_quotes": f"Backed by {n} {'quote' if n == 1 else 'quotes'}",
+            "quote_words": f"The quote is {n} words long",
+            "min_match_score": "The quote matches the transcript exactly" if v >= 0.999
+                               else f"The quote only loosely matches the transcript ({v:.0%})",
+            "has_deadline": "It names a deadline" if n else "No deadline given",
+            "meeting_conf_mean": None if v >= 0.999 else
+                                 f"The recording overall was {'noisy' if v < 0.92 else 'fairly clean'} "
+                                 f"(average recognizer confidence {v:.0%})",
+        }.get(c)
+
     def why(row: pd.Series, lane: str) -> list[dict]:
         z = (row[cols].to_numpy(dtype=float) - scaler.mean_) / scaler.scale_
         contrib = dict(zip(cols, z * lr.coef_[0]))
-        # Group one-hot features so the phrase describes what the insight actually is.
         drivers = {}
-        kind = next(c.removeprefix("type_") for c in cols if c.startswith("type_") and row[c] == 1)
-        drivers[TYPE_PHRASE[kind]] = sum(v for c, v in contrib.items() if c.startswith("type_"))
-        owner_part = contrib.pop("owner_team") + contrib.pop("owner_named")
+        # Group one-hot type (and, outside action items, owner) features into one reason.
+        kind = next(k for k in kinds if row[f"type_{k}"] == 1)
+        type_v = sum(contrib.pop(f"type_{k}") for k in kinds)
+        owner_v = contrib.pop("owner_team") + contrib.pop("owner_named")
+        if kind != "action_item":
+            type_v += owner_v
+        r = rate[kind]
+        # Wording follows the direction of the effect, so the sentence never contradicts its arrow.
+        drivers[f"{plural[kind]} are wrong {'more' if type_v > 0 else 'less'} often than average "
+                f"({r:.0%} vs {overall:.0%} in the other meeting series)"] = type_v
         if kind == "action_item":
-            owner = ("Owner given as 'the team'" if row["owner_team"] else
-                     "Owner is a named person" if row["owner_named"] else "No owner named")
-            drivers[owner] = owner_part
-        else:  # only action items have owners; for other types this is part of the type
-            drivers[TYPE_PHRASE[kind]] += owner_part
-        # The recognizer features measure one thing; explain them as one.
+            owner = ("The owner is the whole team" if row["owner_team"] else
+                     "The owner is a named role" if row["owner_named"] else "No owner was named")
+            drivers[owner] = owner_v
+        contrib.pop("has_value", None)  # carried by the cost-figure type
+        # The recognizer features measure one thing; explain them as one, with its number.
         rec = [c for c in ("quote_conf_min", "quote_conf_mean", "quote_low_conf_share") if c in contrib]
         if rec:
             v = sum(contrib.pop(c) for c in rec)
-            drivers["Recognizer unsure of the quoted words" if v > 0
-                    else "Recognizer confident in the quoted words"] = v
+            low = row["quote_conf_min"]
+            drivers["From a human transcript, so no word was misheard" if low >= 0.999 else
+                    f"The speech recognizer was {'less sure than usual' if v > 0 else 'sure'} of the quoted "
+                    f"words (least sure word {low:.0%})"] = v
         for c, v in contrib.items():
-            if c in PHRASES:
-                above = row[c] > scaler.mean_[cols.index(c)]
-                drivers[PHRASES[c][0 if above else 1]] = v
+            text = sentence(c, row)
+            if text and c in ("model_confidence", "turns_nearby", "speakers_nearby", "quote_words"):
+                text += f" (typical: {scaler.mean_[cols.index(c)]:.0f})"  # so the number means something
+            if text:
+                drivers[text] = v
         sign = 1 if lane == "review" else -1  # held: what raises risk; auto: what lowers it
         ranked = sorted(((t, v) for t, v in drivers.items() if sign * v > 0.15), key=lambda tv: -sign * tv[1])
         return [{"text": t, "raises_risk": bool(v > 0), "weight": round(float(v), 2)} for t, v in ranked[:3]]
