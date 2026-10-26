@@ -4,7 +4,7 @@ import { pct } from "../types";
 
 const ORDER: Status[] = ["correct", "stale", "wrong", "missing"];
 const FILL: Record<Status, string> = {
-  correct: "var(--auto)", stale: "var(--review)", wrong: "var(--fault)", missing: "#c9cfd6",
+  correct: "var(--auto)", stale: "var(--review)", wrong: "var(--fault)", missing: "var(--missing)",
 };
 const LABEL: Record<Status, string> = {
   correct: "Current", stale: "Out of date", wrong: "Never true", missing: "Missing",
@@ -67,7 +67,7 @@ export default function MemoryBars({ rows }: { rows: FindingsData["memory"] }) {
                       );
                     })}
                     <text x={LEFT + row.correct * PLOT - 7} y={top + BAR - 4} textAnchor="end"
-                          style={{ fill: "#fff", fontWeight: 600, fontSize: 12 }}>{pct(row.correct)}</text>
+                          style={{ fill: "var(--deep)", fontWeight: 600, fontSize: 12 }}>{pct(row.correct)}</text>
                   </g>
                 );
               })}

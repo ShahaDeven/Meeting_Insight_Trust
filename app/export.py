@@ -1,7 +1,8 @@
 """Export precomputed results for the static review console (web/).
 
   python -m app.export
-Out: web/public/data/{meeting,memory,findings}.json and web/public/audio/*.mp3
+Out: web/public/data/{series,memory,findings}.json, web/public/data/meetings/TS3003{a-d}.json,
+     web/public/audio/TS3003{a-d}.{clean,farfield}.mp3
 
 The console runs no models: everything it shows is produced here from the pipeline outputs.
 Risk scores are the held-out (leave-one-series-out) predictions, and each insight's "why" comes
@@ -10,12 +11,13 @@ from a logistic model fitted without the featured series, so explanations match 
 
 import json
 import subprocess
+import urllib.request
 from collections import defaultdict
 
 import numpy as np
 import pandas as pd
 
-from core.config import DATA, INSIGHTS, PRIMARY_SERIES, RESULTS, ROOT, SERIES, Condition
+from core.config import AMI_MIRROR, DATA, INSIGHTS, PRIMARY_SERIES, RESULTS, ROOT, SERIES
 from core.jsonl import read_jsonl
 from core.transcript import load_transcript
 from evals.audit_sheet import current_verdicts
@@ -26,7 +28,7 @@ from risk.policy import ASR, COST
 from risk.train import feature_columns, models
 
 WEB = ROOT / "web" / "public"
-MEETING, SERIES_ID = "TS3003c", "TS3003"
+SERIES_ID = "TS3003"
 
 AUDIO = {"clean": ("Mix-Headset", "headset microphones"),
          "farfield": ("Array1-01", "one far-field room microphone")}
@@ -49,7 +51,6 @@ PHRASES = {
     "min_match_score": ("Quote matches the transcript exactly", "Quote only loosely matches the transcript"),
     "has_value": ("Carries a figure", "No figure"),
     "has_deadline": ("Carries a deadline", "No deadline"),
-    "is_asr": ("Machine transcript", "Human transcript"),
 }
 TYPE_PHRASE = {"action_item": "Action item", "decision": "Decision claim", "open_risk": "Open risk",
                "cost_figure": "Cost figure"}
@@ -59,17 +60,51 @@ def mmss(t: float) -> str:
     return f"{int(t // 60)}:{int(t % 60):02d}"
 
 
-def encode_audio() -> dict:
+def encode_audio(mid: str) -> dict:
+    """Download (if needed) and re-encode one meeting's two recordings for the console."""
     out = {}
     (WEB / "audio").mkdir(parents=True, exist_ok=True)
     for cond, (mic, _) in AUDIO.items():
-        src = DATA / "audio" / f"{MEETING}.{mic}.wav"
-        dst = WEB / "audio" / f"{MEETING}.{cond}.mp3"
+        src = DATA / "audio" / f"{mid}.{mic}.wav"
+        dst = WEB / "audio" / f"{mid}.{cond}.mp3"
         if not dst.exists():
+            if not src.exists():
+                src.parent.mkdir(parents=True, exist_ok=True)
+                urllib.request.urlretrieve(f"{AMI_MIRROR}/{mid}/audio/{src.name}", src)
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-ac", "1",
                             "-ar", "16000", "-b:a", "24k", str(dst)], check=True)
         out[cond] = f"audio/{dst.name}"
     return out
+
+
+NEXT_MEETING = ("next meeting", "next time", "next session", "next one", "for the next")
+SAME_MEETING = ("today", "this meeting", "now", "end of the meeting", "before we finish")
+
+
+def due_of(deadline: str | None, part: str) -> dict:
+    """Map a spoken deadline onto the series calendar (the corpus records no clock times)."""
+    if not deadline:
+        return {"kind": "none"}
+    d = deadline.lower()
+    if any(k in d for k in NEXT_MEETING):
+        nxt = "abcd"[min("abcd".index(part) + 1, 3)]
+        return {"kind": "after"} if part == "d" else {"kind": "meeting", "part": nxt}
+    if any(k in d for k in SAME_MEETING):
+        return {"kind": "meeting", "part": part}
+    return {"kind": "text", "text": deadline}
+
+
+def field_link(ins: Insight, written: list[dict]) -> str | None:
+    """The record field change backed by a quote within 30 s of this insight's quotes, if any."""
+    best, gap = None, 30.0
+    for w in written:
+        if w.get("start") is None:
+            continue
+        for q in ins.evidence:
+            d = min(abs(w["start"] - q.start), abs(w["start"] - q.end))
+            if d <= gap:
+                best, gap = w["slot"], d
+    return best
 
 
 def explainer(features: pd.DataFrame):
@@ -109,13 +144,23 @@ def explainer(features: pd.DataFrame):
     return why
 
 
-def export_meeting(verdicts: dict, scores: pd.DataFrame, features: pd.DataFrame, audio: dict) -> dict:
+def gated(cond: str, part: str) -> tuple[list[dict], list[dict], list[dict]]:
+    """Record fields after a meeting, the changes the gate wrote (with evidence), and those it held."""
+    base = MEMORY / "gated_resummarize"
+    stem = f"{SERIES_ID}.{cond}.{part}"  # not Path.with_suffix: ".a" would be taken as the suffix
+    read = lambda ext: json.loads((base / f"{stem}{ext}").read_text(encoding="utf-8"))  # noqa: E731
+    slots, written, held = read(".json")["slots"], read(".evidence.json"), read(".review.json")
+    return slots, written, held
+
+
+def export_meeting(mid: str, verdicts: dict, scores: pd.DataFrame, why, feats: pd.DataFrame,
+                   audio: dict) -> dict:
     """Lanes follow the explicit write policy in risk.policy: review when risk >= 1/COST[type]."""
-    why = explainer(features)
-    feats = features.set_index("insight_id")
+    part = mid[-1]
     conds = {}
     for cond in SHOWN:
-        t = load_transcript(MEETING, cond)
+        _, written, _ = gated(cond, part)
+        t = load_transcript(mid, cond)
         turns = [{"speaker": turn.speaker, "start": round(turn.start, 2), "end": round(turn.end, 2),
                   "words": [[w.text, round(w.start, 2),
                              None if w.conf is None else round(w.conf, 2),
@@ -129,34 +174,72 @@ def export_meeting(verdicts: dict, scores: pd.DataFrame, features: pd.DataFrame,
         track = [round(float(np.mean(confs[b])), 3) if confs.get(b) else None
                  for b in range(int(t.duration // 10) + 1)] if confs else []
         insights = []
-        for ins in read_jsonl(INSIGHTS / f"{MEETING}.{cond}.r0.jsonl", Insight):
+        for ins in read_jsonl(INSIGHTS / f"{mid}.{cond}.r0.jsonl", Insight):
             if ins.id not in scores.index:
                 continue
             risk = float(scores.loc[ins.id, "logistic"])
             threshold = 1 / COST[str(ins.type)]
             lane = "review" if risk >= threshold else "auto"
             v = verdicts[ins.id]
+            action = ins.type == "action_item"
+            due = due_of(ins.deadline, part) if action else {"kind": "none"}
             insights.append({
-                "id": ins.id, "type": str(ins.type), "summary": ins.summary, "owner": ins.owner,
-                "value": ins.value, "deadline": ins.deadline, "risk": round(risk, 3),
+                "id": ins.id, "meeting": part, "type": str(ins.type), "summary": ins.summary,
+                "owner": ins.owner, "value": ins.value, "deadline": ins.deadline, "risk": round(risk, 3),
                 "lane": lane, "threshold": round(threshold, 3),
                 "extractor_confidence": ins.model_confidence,
                 "quotes": [{"text": q.text, "speaker": q.speaker, "start": round(q.start, 2),
                             "end": round(q.end, 2), "at": mmss(q.start)} for q in ins.evidence],
                 "why": why(feats.loc[ins.id], lane),
                 "reviewer": {"verdict": v["verdict"], "failure": v["failure"], "reason": v["reason"]},
+                # Where this write lands: always the meeting's notes; action items also become a
+                # task, and one with a schedulable deadline lands on the calendar.
+                "destinations": ["notes"] + (["tasks"] if action else [])
+                                + (["calendar"] if due["kind"] in ("meeting", "after") else []),
+                "due": due,
+                "field": None if action else field_link(ins, written),
             })
         insights.sort(key=lambda i: i["quotes"][0]["start"])
         rejected = [{"type": r["type"], "summary": r["summary"], "reason": r["reason"],
                      "quotes": [q["text"] for q in r["quotes"]]}
-                    for r in read_jsonl(INSIGHTS / f"{MEETING}.{cond}.r0.rejected.jsonl")]
+                    for r in read_jsonl(INSIGHTS / f"{mid}.{cond}.r0.rejected.jsonl")]
         conds[cond] = {"audio": audio[cond], "microphone": AUDIO[cond][1],
                        "transcript": "human transcript" if cond == "clean" else "speech recognition",
                        "turns": turns, "confidence": track, "insights": insights, "rejected": rejected}
-    return {"meeting": MEETING, "series": SERIES_ID, "stage": STAGES[MEETING[-1]],
+    return {"meeting": mid, "part": part, "series": SERIES_ID, "stage": STAGES[part],
             "duration": round(max(c["turns"][-1]["end"] for c in conds.values()), 1),
-            "policy": {"costs": COST, "thresholds": {k: round(1 / v, 3) for k, v in COST.items()}},
             "conditions": conds}
+
+
+def export_series(meetings: dict[str, dict]) -> dict:
+    """Destinations for the whole series: record fields (gate), meeting notes and tasks (policy)."""
+    out = {"series": SERIES_ID, "date": "11 October 2004",
+           "meetings": [{"part": m["part"], "id": m["meeting"], "stage": m["stage"],
+                         "duration": m["duration"]} for m in meetings.values()],
+           "policy": {"costs": COST, "thresholds": {k: round(1 / v, 3) for k, v in COST.items()}},
+           "conditions": {}}
+    for cond in SHOWN:
+        fields = {}
+        for part in "abcd":
+            slots, written, held = gated(cond, part)
+            fields[part] = {
+                "slots": slots,
+                "written": [w | {"at": mmss(w["start"]) if w.get("start") is not None else None}
+                            for w in written],
+                "held": held,
+            }
+        notes, tasks = {}, []
+        for m in meetings.values():
+            ins = m["conditions"][cond]["insights"]
+            notes[m["part"]] = [{k: i[k] for k in ("id", "type", "summary", "owner", "value", "deadline",
+                                                    "lane", "risk", "threshold", "field")}
+                                | {"quote": i["quotes"][0]} for i in ins]
+            tasks += [{"id": i["id"], "meeting": m["part"], "task": i["summary"], "owner": i["owner"],
+                       "deadline": i["deadline"], "due": i["due"], "lane": i["lane"], "risk": i["risk"],
+                       "threshold": i["threshold"], "quote": i["quotes"][0]}
+                      for i in ins if i["type"] == "action_item"]
+        out["conditions"][cond] = {"fields": fields, "notes": notes, "tasks": tasks}
+    return out
 
 
 def export_memory() -> dict:
@@ -238,10 +321,19 @@ def main() -> None:
     verdicts = current_verdicts()
     scores = pd.read_csv(RESULTS / "risk_scores.csv")
     features = pd.read_csv(RESULTS / "risk_features.csv")
-    audio = encode_audio()
-    (WEB / "data").mkdir(parents=True, exist_ok=True)
-    outputs = {"meeting": export_meeting(verdicts, scores.set_index("insight_id"), features, audio),
-               "memory": export_memory(), "findings": export_findings(scores)}
+    why, feats = explainer(features), features.set_index("insight_id")
+    (WEB / "data" / "meetings").mkdir(parents=True, exist_ok=True)
+    meetings = {}
+    for part in "abcd":
+        mid = f"{SERIES_ID}{part}"
+        meetings[mid] = export_meeting(mid, verdicts, scores.set_index("insight_id"), why, feats,
+                                       encode_audio(mid))
+    old = WEB / "data" / "meeting.json"  # single-meeting format from before the series view
+    if old.exists():
+        old.unlink()
+    outputs = {f"meetings/{mid}": m for mid, m in meetings.items()}
+    outputs |= {"series": export_series(meetings), "memory": export_memory(),
+                "findings": export_findings(scores)}
     for name, obj in outputs.items():
         path = WEB / "data" / f"{name}.json"
         path.write_text(json.dumps(obj, separators=(",", ":")), encoding="utf-8")

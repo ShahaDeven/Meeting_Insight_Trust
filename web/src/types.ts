@@ -40,7 +40,15 @@ export interface Insight {
   quotes: Quote[];
   why: Driver[];
   reviewer: { verdict: "correct" | "wrong" | "unsure"; failure: string; reason: string };
+  meeting: MeetingPart;
+  destinations: Destination[];
+  due: Due;
+  field: string | null;
 }
+
+export type Destination = "notes" | "tasks" | "calendar";
+export type Due = { kind: "none" } | { kind: "after" } | { kind: "meeting"; part: MeetingPart }
+  | { kind: "text"; text: string };
 
 export interface CondData {
   audio: string;
@@ -54,11 +62,48 @@ export interface CondData {
 
 export interface MeetingData {
   meeting: string;
+  part: MeetingPart;
   series: string;
   stage: string;
   duration: number;
-  policy: { costs: Record<InsightType, number>; thresholds: Record<InsightType, number> };
   conditions: Record<Cond, CondData>;
+}
+
+export interface FieldWrite {
+  slot: string; old: string | null; new: string | null;
+  quote: string | null; speaker?: string; start?: number; at: string | null;
+}
+export interface FieldHold { slot: string; old: string | null; new: string | null; verifier_said: string }
+export interface Note {
+  id: string; type: InsightType; summary: string; owner: string | null; value: string | null;
+  deadline: string | null; lane: Lane; risk: number; threshold: number; field: string | null; quote: Quote;
+}
+export interface Task {
+  id: string; meeting: MeetingPart; task: string; owner: string | null; deadline: string | null;
+  due: Due; lane: Lane; risk: number; threshold: number; quote: Quote;
+}
+export interface SeriesData {
+  series: string;
+  date: string;
+  meetings: { part: MeetingPart; id: string; stage: string; duration: number }[];
+  policy: { costs: Record<InsightType, number>; thresholds: Record<InsightType, number> };
+  conditions: Record<Cond, {
+    fields: Record<MeetingPart, { slots: Slot[]; written: FieldWrite[]; held: FieldHold[] }>;
+    notes: Record<MeetingPart, Note[]>;
+    tasks: Task[];
+  }>;
+}
+
+/** A reviewer's call on a held write. Simulated: it changes this page only. */
+export type Decision = { action: "approved" | "rejected" } | { action: "edited"; value: string };
+
+/** Where a link should take the reader. */
+export interface Target {
+  view: "review" | "destinations" | "log";
+  part?: MeetingPart;
+  dest?: "record" | "tasks" | "calendar";
+  focus?: string;      // an insight id, or "field:<slot>"
+  at?: number;         // play the meeting from this second
 }
 
 export type Status = "correct" | "stale" | "wrong" | "missing";
@@ -158,4 +203,16 @@ export function clock(t: number): string {
 
 export function pct(x: number, digits = 0): string {
   return `${(x * 100).toFixed(digits)}%`;
+}
+
+export function prettySlot(s: string): string {
+  const t = s.replace(/_/g, " ");
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+export function dueText(d: Due, stages: Record<string, string>): string {
+  if (d.kind === "meeting") return `Meeting ${d.part} (${stages[d.part]})`;
+  if (d.kind === "after") return "After the series";
+  if (d.kind === "text") return d.text;
+  return "No deadline";
 }

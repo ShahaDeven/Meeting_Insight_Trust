@@ -161,7 +161,7 @@ def gated_resummarize(prev: list[Slot], mid: str, cond: Condition, budget: Budge
     proposed, _ = re_summarize(prev, mid, cond, budget)
     changes = _changes(prev, proposed)
     if not changes:
-        return proposed, {"changes": 0, "auto": 0, "review": 0, "queue": []}
+        return proposed, {"changes": 0, "auto": 0, "review": 0, "queue": [], "applied": []}
     t = load_transcript(mid, cond)
     listing = "\n".join(
         f"{n}. {name}: " + (f'"{old}" -> ' if old else "new: ")
@@ -175,23 +175,25 @@ def gated_resummarize(prev: list[Slot], mid: str, cond: Condition, budget: Budge
 def apply_checks(prev, changes, checks: dict, t) -> tuple[list[Slot], dict]:
     """Auto-write a change only if its quote is really in the transcript; queue the rest."""
     record = {s.slot.lower(): s for s in prev}
-    queue = []
+    queue, applied = [], []
     for n, (name, old, slot) in enumerate(changes, 1):
         c = checks.get(n)
-        backed = bool(c and c.supported and c.quote and c.line is not None
-                      and locate(t, c.line, c.quote))
-        if backed:
+        hit = locate(t, c.line, c.quote) if c and c.supported and c.quote and c.line is not None else None
+        if hit:
             if slot is None:
                 record.pop(name.lower(), None)
             else:
                 record[name.lower()] = slot
+            turn, words, _ = hit
+            applied.append({"slot": name, "old": old, "new": slot.value if slot else None,
+                            "quote": " ".join(w.text for w in words), "speaker": turn.speaker,
+                            "start": words[0].start})
         else:
             queue.append({"slot": name, "old": old, "new": slot.value if slot else None,
                           "verifier_said": "supported, quote not found" if c and c.supported
                           else "unsupported"})
-    auto = len(changes) - len(queue)
-    return list(record.values()), {"changes": len(changes), "auto": auto, "review": len(queue),
-                                   "queue": queue}
+    return list(record.values()), {"changes": len(changes), "auto": len(applied), "review": len(queue),
+                                   "queue": queue, "applied": applied}
 
 
 def apply_ops(prev: list[Slot], ops: list[_Op], n_insights: int) -> tuple[list[Slot], dict]:
@@ -227,6 +229,9 @@ def run_series(strategy: str, series: str, cond: Condition, budget: Budget) -> d
         if "queue" in info:
             out.with_suffix(".review.json").write_text(
                 json.dumps(info.pop("queue"), indent=1), encoding="utf-8")
+        if "applied" in info:  # the evidence behind every auto-written change
+            out.with_suffix(".evidence.json").write_text(
+                json.dumps(info.pop("applied"), indent=1), encoding="utf-8")
         stats.append({"meeting": part, "slots": len(record), **info})
     return {"job": f"{strategy} {series} {cond}", "steps": stats}
 

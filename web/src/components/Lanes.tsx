@@ -1,5 +1,5 @@
-import type { CondData, Insight, InsightType, Lane } from "../types";
-import { TYPE_LABEL } from "../types";
+import type { CondData, Insight, InsightType, Lane, Target } from "../types";
+import { TYPE_LABEL, prettySlot } from "../types";
 
 const FAILURE: Record<string, string> = {
   content: "not what was said, or later reversed",
@@ -31,7 +31,31 @@ function Risk({ value, threshold, lane }: { value: number; threshold: number; la
   );
 }
 
-function Item({ i, active, onPlay }: { i: Insight; active: boolean; onPlay: (id: string, t: number) => void }) {
+function Lands({ i, onGo }: { i: Insight; onGo: (t: Target) => void }) {
+  const status = i.lane === "review" ? "pending approval" : "written";
+  const links: { label: string; target: Target }[] = [
+    { label: `Meeting notes (${status})`, target: { view: "destinations", dest: "record", part: i.meeting, focus: i.id } },
+  ];
+  if (i.destinations.includes("tasks"))
+    links.push({ label: `Tasks (${status})`, target: { view: "destinations", dest: "tasks", part: i.meeting, focus: i.id } });
+  if (i.destinations.includes("calendar"))
+    links.push({ label: "Calendar follow-up", target: { view: "destinations", dest: "calendar", part: i.meeting, focus: i.id } });
+  if (i.field)
+    links.push({ label: `Record field: ${prettySlot(i.field)}`,
+                 target: { view: "destinations", dest: "record", part: i.meeting, focus: `field:${i.field}` } });
+  return (
+    <div className="lands">
+      <span className="lands-label">Lands in</span>
+      {links.map((l) => (
+        <button key={l.label} className="go" onClick={() => onGo(l.target)}>{l.label}</button>
+      ))}
+    </div>
+  );
+}
+
+function Item({ i, active, onPlay, onGo }: { i: Insight; active: boolean; onPlay: (id: string, t: number) => void;
+                                             onGo: (t: Target) => void }) {
+  const line = `${Math.round(i.threshold * 100)}%`;
   return (
     <li className={`insight${active ? " active" : ""}`}>
       <div className="row1">
@@ -40,6 +64,11 @@ function Item({ i, active, onPlay }: { i: Insight; active: boolean; onPlay: (id:
       </div>
       <p className="summary">{i.summary}</p>
       <Facts i={i} />
+      <p className="lane-why">
+        {i.lane === "review"
+          ? `Held: risk ${Math.round(i.risk * 100)}% is at or above the ${line} review line for ${TYPE_LABEL[i.type].toLowerCase()}s.`
+          : `Written: risk ${Math.round(i.risk * 100)}% is below the ${line} review line for ${TYPE_LABEL[i.type].toLowerCase()}s.`}
+      </p>
       {i.quotes.map((q, k) => (
         <blockquote className="quote" key={k}>
           <button className="play" onClick={() => onPlay(i.id, q.start)} aria-label={`Play quote at ${q.at}`}>
@@ -59,6 +88,7 @@ function Item({ i, active, onPlay }: { i: Insight; active: boolean; onPlay: (id:
           ))}
         </ul>
       )}
+      <Lands i={i} onGo={onGo} />
       <details className="check-reviewer">
         <summary>What an independent reviewer said</summary>
         <span className={`verdict ${i.reviewer.verdict}`}>
@@ -80,9 +110,10 @@ interface Props {
   costs: Record<InsightType, number>;
   active?: string;
   onPlay: (id: string, t: number) => void;
+  onGo: (t: Target) => void;
 }
 
-export default function Lanes({ insights, rejected, costs, active, onPlay }: Props) {
+export default function Lanes({ insights, rejected, costs, active, onPlay, onGo }: Props) {
   const lanes: { lane: Lane; title: string; note: string }[] = [
     { lane: "review", title: "Held for review", note: "Expected cost of a wrong write is higher than a person checking it" },
     { lane: "auto", title: "Written automatically", note: "Low risk for its type: goes straight to the record" },
@@ -100,7 +131,7 @@ export default function Lanes({ insights, rejected, costs, active, onPlay }: Pro
               <p>{note}</p>
             </div>
             {items.length ? (
-              <ul>{items.map((i) => <Item key={i.id} i={i} active={i.id === active} onPlay={onPlay} />)}</ul>
+              <ul>{items.map((i) => <Item key={i.id} i={i} active={i.id === active} onPlay={onPlay} onGo={onGo} />)}</ul>
             ) : (
               <p style={{ padding: "0 16px 14px", margin: 0, color: "var(--ink-3)" }}>Nothing in this meeting crossed the review threshold.</p>
             )}

@@ -14,7 +14,7 @@ function confFill(c: number | null): string {
   if (c === null) return "transparent";
   const t = Math.min(1, Math.max(0, (0.9 - c) / 0.2)); // 90%+ blank, 70% or less full
   const mix = (a: number, b: number) => Math.round(a + (b - a) * t);
-  return `rgb(${mix(251, 214)},${mix(248, 158)},${mix(238, 54)})`;
+  return `rgb(${mix(26, 191)},${mix(31, 131)},${mix(39, 32)})`;  // panel -> amber
 }
 
 interface Props {
@@ -102,7 +102,7 @@ export default function Ribbon({ meeting, data, time, active, onSeek, onPin }: P
         <span><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="5" className="pin-auto" /></svg>Auto-write</span>
         <span><svg width="12" height="12" aria-hidden="true"><rect x="2.5" y="2.5" width="7" height="7" transform="rotate(45 6 6)" className="pin-review" /></svg>Held for review</span>
         {data.confidence.length > 0 && (
-          <span><i className="swatch" style={{ background: "linear-gradient(90deg, #fbf8ee, #d69e36)" }} />Recognizer less sure</span>
+          <span><i className="swatch" style={{ background: "linear-gradient(90deg, #262a2f, #bf8320)" }} />Recognizer less sure</span>
         )}
       </div>
     </section>

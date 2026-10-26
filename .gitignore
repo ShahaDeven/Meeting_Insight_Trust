@@ -28,7 +28,7 @@ gpu/audio/
 # Report build artifacts (final charts in report/ are committed)
 report/_scratch/
 
-# Web console: dependencies, build output and the large audio (rebuilt by python -m app.export)
+# Web console: dependencies and build output. The console's data and audio ARE committed
+# (web/public/data, web/public/audio) so a fresh clone runs with npm alone.
 web/node_modules/
 web/dist/
-web/public/audio/

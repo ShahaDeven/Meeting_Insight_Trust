@@ -1,8 +1,22 @@
 # Meeting Insight Trust
 
+[![tests](https://github.com/ShahaDeven/Meeting_Insight_Trust/actions/workflows/tests.yml/badge.svg)](https://github.com/ShahaDeven/Meeting_Insight_Trust/actions/workflows/tests.yml)
+
 **Which meeting insights are safe to write to a CRM automatically, and which need a person?**
 
 Meeting assistants extract decisions, action items, owners and figures from calls and increasingly write them straight into systems of record. This project measures, on real meeting audio, how often those insights are wrong, why, and whether a risk score can route the risky ones to review. It is an offline evaluation on a public corpus with a static review console; it has not been tested against any vendor's production system.
+
+## See it in three steps
+
+Needs only [Node.js](https://nodejs.org) 20 or later. No Python, API keys or GPU: every result is precomputed and committed.
+
+```bash
+git clone https://github.com/ShahaDeven/Meeting_Insight_Trust.git
+cd Meeting_Insight_Trust/web
+npm install && npm run dev
+```
+
+Then open http://localhost:5176. Start on **Meeting review** with meeting c and the room microphone, click an amber diamond on the timeline, then follow a card's **Lands in** links to see where that write ends up.
 
 ## Findings
 
@@ -77,7 +91,14 @@ flowchart LR
 
 ## Console
 
-`web/` is a static React review console over precomputed results: the meeting timeline with recognizer confidence and who spoke when, the transcript with low-confidence words marked, insights in *held for review / written automatically / rejected* lanes with their quotes, play-from-here audio and plain-language reasons, the project-memory comparison, and these findings. It includes the TS3003c moment where the room microphone splits "I don't have any information on pricing, so I'll have to ask the manufacturing department" between two speakers.
+`web/` is a static React review console over precomputed results for one four-meeting series (TS3003):
+
+- **Meeting review:** the timeline with recognizer confidence and who spoke when, the transcript with low-confidence words marked, and insights in *held for review / written automatically / rejected* lanes, each with its quotes, play-from-here audio, the reason for its lane, and links to where it lands.
+- **Destinations (simulated):** a *Project record* whose current fields are kept up to date across the four meetings by re-summarizing with an evidence gate (written changes show before → after and the quote behind them; unquoted changes wait for approval), the meeting notes, *Tasks* with owner roles and due points, and a *Calendar* of follow-ups. Approve, Edit and Reject change the page only.
+- **Write log:** every write across the series in order, with its writer, destination, before → after, status and reason, linking both to the destination and back to the source moment.
+- **Memory study** and **What we measured:** the experiments and findings above.
+
+It includes the TS3003c moment where the room microphone splits "I don't have any information on pricing, so I'll have to ask the manufacturing department" between two speakers.
 
 ```
 python -m app.export          # writes web/public/data/*.json and web/public/audio/*.mp3
@@ -103,7 +124,7 @@ Requires Python 3.11 and Node 22. All commands run from the repo root; every sta
 - **Models:** `claude-haiku-5-5` for extraction, judging and memory (effort medium; high for judging and matching), `claude-sonnet-5-5` once to draft the state tables; faster-whisper `large-v3`; pyannote `speaker-diarization-community-1` (pyannote.audio 4.0.7, CTranslate2 4.8.3, torch 2.8.0).
 - **Seeds and determinism:** speaker swap seeded per meeting; bootstraps seeded; Claude Haiku 5.5 does not accept a temperature setting, so extraction is repeated three times on clean transcripts to measure run-to-run variation (19% mean spread in insight count).
 - **Spend control:** every call is priced from its usage and logged to `data/results/llm_usage.jsonl`; a hard cap (`MAX_USD`, default $10) stops a run. Total for every experiment here: $3.04 of API calls plus $0.35 of GPU.
-- **What is committed:** code, tests and the console's precomputed `web/public/data`. Not committed: raw AMI audio and annotations, transcripts, model outputs and the console's audio (regenerate with the steps above).
+- **What is committed:** code, tests, and everything the console needs: its precomputed data (`web/public/data`) and one series' re-encoded audio (`web/public/audio`, 53 MB). Not committed: raw AMI audio and annotations, transcripts and model outputs (regenerate with the steps above; `python -m app.export` rebuilds the console's data and audio).
 - **Tests:** `pytest -q` (no API key or corpus data needed); CI runs them and the web build on every push.
 
 ## Limits
@@ -118,4 +139,4 @@ Requires Python 3.11 and Node 22. All commands run from the repo root; every sta
 
 ## Data and license
 
-AMI Meeting Corpus (Carletta et al., 2005). The corpus distribution states that its signals, transcriptions and released annotations are under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). This repository does not include raw corpus files. The console includes one meeting's audio (TS3003c, re-encoded at 24 kbps) and derived transcripts, redistributed under CC BY 4.0 with this attribution. Speech recognition: Whisper (MIT). Diarization: pyannote community-1 (CC BY 4.0).
+AMI Meeting Corpus (Carletta et al., 2005). The corpus distribution states that its signals, transcriptions and released annotations are under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). This repository does not include raw corpus files. The console includes the audio of one series (TS3003a–d, re-encoded at 24 kbps) and derived transcripts, redistributed under CC BY 4.0 with this attribution. Speech recognition: Whisper (MIT). Diarization: pyannote community-1 (CC BY 4.0).
