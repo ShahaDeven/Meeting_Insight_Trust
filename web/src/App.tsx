@@ -86,8 +86,9 @@ export default function App() {
           <h1>Which meeting insights are safe to write to the CRM?</h1>
           <p>
             A real product-design meeting, transcribed from a room microphone. Every extracted
-            insight gets a risk score; the riskiest {Math.round(meeting.policy.review_share * 100)}% wait
-            for a person, the rest are written automatically.
+            insight gets a risk score. When a wrong write would cost more than a person checking it,
+            the insight waits for review; insights with no supporting quote are rejected; the rest are
+            written automatically.
           </p>
         </div>
         {view === "review" && (
@@ -141,7 +142,8 @@ export default function App() {
               />
               <Lanes
                 insights={data.insights}
-                threshold={meeting.policy.threshold}
+                rejected={data.rejected}
+                costs={meeting.policy.costs}
                 active={active}
                 onPlay={(id, t) => { setActive(id); seek(t); }}
               />

@@ -22,11 +22,12 @@ from evals.audit_sheet import current_verdicts
 from extract.extractor import STAGES
 from extract.memory_strategies import MEMORY, STRATEGIES, Record
 from extract.schema import Insight
+from risk.policy import ASR, COST
 from risk.train import feature_columns, models
 
 WEB = ROOT / "web" / "public"
 MEETING, SERIES_ID = "TS3003c", "TS3003"
-REVIEW_SHARE = 0.20
+
 AUDIO = {"clean": ("Mix-Headset", "headset microphones"),
          "farfield": ("Array1-01", "one far-field room microphone")}
 SHOWN = ("clean", "farfield")
@@ -109,7 +110,7 @@ def explainer(features: pd.DataFrame):
 
 
 def export_meeting(verdicts: dict, scores: pd.DataFrame, features: pd.DataFrame, audio: dict) -> dict:
-    threshold = float(scores.logistic.quantile(1 - REVIEW_SHARE))
+    """Lanes follow the explicit write policy in risk.policy: review when risk >= 1/COST[type]."""
     why = explainer(features)
     feats = features.set_index("insight_id")
     conds = {}
@@ -132,12 +133,13 @@ def export_meeting(verdicts: dict, scores: pd.DataFrame, features: pd.DataFrame,
             if ins.id not in scores.index:
                 continue
             risk = float(scores.loc[ins.id, "logistic"])
+            threshold = 1 / COST[str(ins.type)]
             lane = "review" if risk >= threshold else "auto"
             v = verdicts[ins.id]
             insights.append({
                 "id": ins.id, "type": str(ins.type), "summary": ins.summary, "owner": ins.owner,
                 "value": ins.value, "deadline": ins.deadline, "risk": round(risk, 3),
-                "lane": lane,
+                "lane": lane, "threshold": round(threshold, 3),
                 "extractor_confidence": ins.model_confidence,
                 "quotes": [{"text": q.text, "speaker": q.speaker, "start": round(q.start, 2),
                             "end": round(q.end, 2), "at": mmss(q.start)} for q in ins.evidence],
@@ -145,12 +147,15 @@ def export_meeting(verdicts: dict, scores: pd.DataFrame, features: pd.DataFrame,
                 "reviewer": {"verdict": v["verdict"], "failure": v["failure"], "reason": v["reason"]},
             })
         insights.sort(key=lambda i: i["quotes"][0]["start"])
+        rejected = [{"type": r["type"], "summary": r["summary"], "reason": r["reason"],
+                     "quotes": [q["text"] for q in r["quotes"]]}
+                    for r in read_jsonl(INSIGHTS / f"{MEETING}.{cond}.r0.rejected.jsonl")]
         conds[cond] = {"audio": audio[cond], "microphone": AUDIO[cond][1],
                        "transcript": "human transcript" if cond == "clean" else "speech recognition",
-                       "turns": turns, "confidence": track, "insights": insights}
+                       "turns": turns, "confidence": track, "insights": insights, "rejected": rejected}
     return {"meeting": MEETING, "series": SERIES_ID, "stage": STAGES[MEETING[-1]],
             "duration": round(max(c["turns"][-1]["end"] for c in conds.values()), 1),
-            "policy": {"review_share": REVIEW_SHARE, "threshold": round(threshold, 3)},
+            "policy": {"costs": COST, "thresholds": {k: round(1 / v, 3) for k, v in COST.items()}},
             "conditions": conds}
 
 
@@ -191,7 +196,6 @@ def catch_curve(scores: pd.DataFrame) -> dict:
 
 def export_findings(scores: pd.DataFrame) -> dict:
     ladder = pd.read_csv(RESULTS / "attribution_ladder.csv").set_index("measure")
-    ev = pd.read_csv(RESULTS / "risk_eval.csv")
     human = pd.read_csv(RESULTS / "risk_human_check.csv").set_index("score")
     mem = pd.read_csv(RESULTS / "memory_scores.csv")
     asr = pd.read_csv(RESULTS / "asr_quality.csv")
@@ -210,12 +214,11 @@ def export_findings(scores: pd.DataFrame) -> dict:
                                          "farfield_share_model", "farfield_share_mishearing",
                                          "farfield_share_speaker")},
         "risk": {
-            "catch_curve": catch_curve(scores),
-            "table": ev[ev.subset == "all"][["score", "auroc", "auroc_lo", "auroc_hi", "caught@20",
-                                               "auto_err@20", "caught@30", "auto_err@30"]].round(3)
-                       .to_dict("records"),
+            # Deployment-relevant: headset + far-field ASR only. Clean and swap are controls.
+            "catch_curve": catch_curve(scores[scores.condition.isin(ASR)].reset_index(drop=True)),
+            "deploy": json.loads((RESULTS / "deploy_eval.json").read_text(encoding="utf-8")),
             "human_auroc": {k: round(float(v), 3) for k, v in human.auroc_vs_human.items()},
-            "base_wrong_rate": round(float(scores.wrong.mean()), 4),
+            "human_n": int(human.n.iloc[0]),
         },
         "memory": mem.round(3).to_dict("records"),
         "audits": [

@@ -1,4 +1,4 @@
-import type { Insight, Lane } from "../types";
+import type { CondData, Insight, InsightType, Lane } from "../types";
 import { TYPE_LABEL } from "../types";
 
 const FAILURE: Record<string, string> = {
@@ -31,12 +31,12 @@ function Risk({ value, threshold, lane }: { value: number; threshold: number; la
   );
 }
 
-function Item({ i, threshold, active, onPlay }: { i: Insight; threshold: number; active: boolean; onPlay: (id: string, t: number) => void }) {
+function Item({ i, active, onPlay }: { i: Insight; active: boolean; onPlay: (id: string, t: number) => void }) {
   return (
     <li className={`insight${active ? " active" : ""}`}>
       <div className="row1">
         <span className="kind">{TYPE_LABEL[i.type]}</span>
-        <Risk value={i.risk} threshold={threshold} lane={i.lane} />
+        <Risk value={i.risk} threshold={i.threshold} lane={i.lane} />
       </div>
       <p className="summary">{i.summary}</p>
       <Facts i={i} />
@@ -76,16 +76,19 @@ function Item({ i, threshold, active, onPlay }: { i: Insight; threshold: number;
 
 interface Props {
   insights: Insight[];
-  threshold: number;
+  rejected: CondData["rejected"];
+  costs: Record<InsightType, number>;
   active?: string;
   onPlay: (id: string, t: number) => void;
 }
 
-export default function Lanes({ insights, threshold, active, onPlay }: Props) {
+export default function Lanes({ insights, rejected, costs, active, onPlay }: Props) {
   const lanes: { lane: Lane; title: string; note: string }[] = [
-    { lane: "review", title: "Held for review", note: "A person confirms these before they reach the CRM" },
-    { lane: "auto", title: "Written automatically", note: "Low risk: goes straight to the record" },
+    { lane: "review", title: "Held for review", note: "Expected cost of a wrong write is higher than a person checking it" },
+    { lane: "auto", title: "Written automatically", note: "Low risk for its type: goes straight to the record" },
   ];
+  const policy = (Object.keys(costs) as InsightType[])
+    .map((t) => `${TYPE_LABEL[t].toLowerCase()} at ${Math.round(100 / costs[t])}%`).join(", ");
   return (
     <section className="panel" aria-label="Insights by write decision">
       {lanes.map(({ lane, title, note }) => {
@@ -97,13 +100,36 @@ export default function Lanes({ insights, threshold, active, onPlay }: Props) {
               <p>{note}</p>
             </div>
             {items.length ? (
-              <ul>{items.map((i) => <Item key={i.id} i={i} threshold={threshold} active={i.id === active} onPlay={onPlay} />)}</ul>
+              <ul>{items.map((i) => <Item key={i.id} i={i} active={i.id === active} onPlay={onPlay} />)}</ul>
             ) : (
               <p style={{ padding: "0 16px 14px", margin: 0, color: "var(--ink-3)" }}>Nothing in this meeting crossed the review threshold.</p>
             )}
           </div>
         );
       })}
+      <div className="lane rejected">
+        <div className="lane-title">
+          <h3>Rejected <span className="count">({rejected.length})</span></h3>
+          <p>No quote in the transcript backs these, so they are never written</p>
+        </div>
+        {rejected.length ? (
+          <ul>
+            {rejected.map((r, k) => (
+              <li className="insight" key={k}>
+                <span className="kind">{TYPE_LABEL[r.type]}</span>
+                <p className="summary">{r.summary}</p>
+                <span className="facts">Cited “{r.quotes[0] ?? ""}”, which is not in the transcript</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p style={{ padding: "0 16px 14px", margin: 0, color: "var(--ink-3)" }}>
+            Every insight from this recording was tied to a real quote.
+          </p>
+        )}
+      </div>
+      <p className="policy-note">Review thresholds by type: {policy}. They follow from a stated cost: a wrong
+        action item is priced at {costs.action_item} reviews, a wrong cost figure at {costs.cost_figure}.</p>
     </section>
   );
 }

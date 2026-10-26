@@ -29,9 +29,15 @@ CRM_PROPERTY = {
 class Quote(BaseModel):
     text: str = Field(min_length=1)  # the transcript's words, not the model's paraphrase
     speaker: str
-    start: float
-    end: float
-    match_score: float = 1.0         # how closely the model's quote matched the transcript
+    start: float = Field(ge=0)
+    end: float = Field(ge=0)
+    match_score: float = Field(default=1.0, ge=0, le=1)  # how closely the model's quote matched
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "Quote":
+        if self.end < self.start:
+            raise ValueError("quote ends before it starts")
+        return self
 
 
 class Insight(BaseModel):

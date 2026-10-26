@@ -73,19 +73,30 @@ def score_record(series: str, gold: list[dict], record: Record, tag: str, budget
 
 
 def main() -> None:
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("--redo", nargs="+", default=[], help="re-score only these conditions")
+    redo = set(p.parse_args().redo)
     gold = json.loads(GOLD.read_text(encoding="utf-8"))
     budget, rows = Budget(), []
     for strategy in STRATEGIES:
-        # One matches file per strategy: a strategy is scored once, so adding a new
-        # strategy never re-scores (and re-randomizes) the earlier ones.
+        # One matches file per strategy: a strategy is scored once, so adding a new strategy
+        # (or redoing one condition) never re-scores and re-randomizes the other results.
         cached = RESULTS / f"memory_matches.{strategy}.jsonl"
+        kept = []
         if cached.exists():
-            rows += [json.loads(line) for line in cached.read_text(encoding="utf-8").splitlines()]
-            continue
+            kept = [json.loads(line) for line in cached.read_text(encoding="utf-8").splitlines()]
+            kept = [r for r in kept if r["condition"] not in redo]
+            if not redo:
+                rows += kept
+                continue
         first = len(rows)
+        rows += kept
         for series in PRIMARY_SERIES:
             g = [s for s in gold[series] if s["after"]["d"]]
             for cond in Condition:
+                if cached.exists() and str(cond) not in redo:
+                    continue
                 path = MEMORY / strategy / f"{series}.{cond}.d.json"
                 record = Record.model_validate_json(path.read_text(encoding="utf-8"))
                 matches = score_record(series, g, record, f"{strategy}.{series}.{cond}", budget)

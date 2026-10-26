@@ -35,6 +35,7 @@ export interface Insight {
   deadline: string | null;
   risk: number;
   lane: Lane;
+  threshold: number;
   extractor_confidence: number;
   quotes: Quote[];
   why: Driver[];
@@ -48,6 +49,7 @@ export interface CondData {
   turns: Turn[];
   confidence: (number | null)[];
   insights: Insight[];
+  rejected: { type: InsightType; summary: string; reason: string; quotes: string[] }[];
 }
 
 export interface MeetingData {
@@ -55,7 +57,7 @@ export interface MeetingData {
   series: string;
   stage: string;
   duration: number;
-  policy: { review_share: number; threshold: number };
+  policy: { costs: Record<InsightType, number>; thresholds: Record<InsightType, number> };
   conditions: Record<Cond, CondData>;
 }
 
@@ -99,14 +101,37 @@ export interface FindingsData {
   ladder: Record<string, Estimate>;
   risk: {
     catch_curve: Record<"logistic" | "base_model_conf" | "base_quote_conf", number[]>;
-    table: { score: string; auroc: number; auroc_lo: number; auroc_hi: number;
-             "caught@20": number; "auto_err@20": number; "caught@30": number; "auto_err@30": number }[];
+    deploy: DeployEval;
     human_auroc: Record<string, number>;
-    base_wrong_rate: number;
+    human_n: number;
   };
   memory: { strategy: Strategy; condition: string; correct: number; stale: number; wrong: number; missing: number }[];
   audits: { name: string; rows: number; agreement: number; kappa?: number; ci?: number[]; note: string }[];
   cost: { llm_usd: number; gpu_usd: number; by_stage: Record<string, number> };
+}
+
+export interface Confusion {
+  review_rate: number; recall_wrong: number; precision_review: number;
+  false_positive_rate: number; auto_error: number;
+}
+
+export interface DeployEval {
+  costs: Record<InsightType, number>;
+  asr_headline: {
+    n: number; wrong_rate: number; auroc: number; auroc_base: number; auroc_quote_conf: number;
+    budget20: Confusion; budget20_base: Confusion; budget20_quote_conf: Confusion; policy: Confusion;
+    gain_vs_base: { auroc_gain: number; auroc_gain_lo: number; auroc_gain_hi: number;
+                    caught20_gain: number; caught20_gain_lo: number; caught20_gain_hi: number };
+    critical_at_20: { risk: number; base: number; gain: number; gain_lo: number; gain_hi: number };
+  };
+  by_condition: { condition: string; role: string; n: number; wrong_rate: number; auroc: number;
+                  auroc_base: number; recall_at_20: number; recall_at_20_base: number }[];
+  asr_by_type: { type: InsightType; n: number; wrong_rate: number; policy_review_rate: number;
+                 policy_recall: number; policy_auto_error: number }[];
+  asr_by_failure: { failure: string; wrong_insights: number; caught_policy: number;
+                    "caught_logistic@20": number; "caught_base_model_conf@20": number }[];
+  rejected: Record<string, { rejected: number; of: number }>;
+  asr_reliability: { predicted: number; observed: number; n: number }[];
 }
 
 export const TYPE_LABEL: Record<InsightType, string> = {

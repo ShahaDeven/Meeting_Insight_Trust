@@ -134,6 +134,8 @@ main { max-width: 1360px; margin: 0 auto; padding: 0 var(--gutter) 64px; }
 .lane-title p { margin: 0; color: var(--ink-3); font-size: var(--s-1); }
 .lane.auto .lane-title h3 { color: var(--auto); }
 .lane.review .lane-title h3 { color: var(--review); }
+.lane.rejected .lane-title h3 { color: var(--fault); }
+.policy-note { margin: 0; padding: 10px 16px 14px; border-top: 1px solid var(--rule); font-size: var(--s-1); color: var(--ink-3); }
 .lane ul { list-style: none; margin: 0; padding: 0 0 8px; }
 
 .insight { padding: 12px 16px 12px 14px; border-left: 3px solid transparent; }

@@ -5,8 +5,9 @@
   python -m pipeline.build --swap-rate 0.1      # fixed swap rate instead of matched
 
 Writes data/transcripts/{meeting}.{condition}.json and data/results/asr_quality.csv.
-By default each meeting's swap rate matches its far-field speaker error, so SPEAKER_SWAP
-carries the same amount of speaker confusion as the real far-field run and nothing else.
+By default each meeting's swap targets its far-field word-level speaker error, so SPEAKER_SWAP
+carries the same dose of speaker confusion as the real far-field run and nothing else. Target and
+achieved word shares are recorded per meeting (swap_target, swap_achieved).
 """
 
 import argparse
@@ -34,10 +35,11 @@ def build_meeting(mid: str, swap_rate: float | None) -> list[dict]:
         rows.append({"meeting": mid, "series": mid[:-1], "condition": str(cond),
                      "minutes": round(clean.duration / 60, 1), "mean_conf": sum(confs) / len(confs),
                      **stats})
-    rate = rows[-1]["speaker_err"] if swap_rate is None else swap_rate
-    save_transcript(swap_speakers(clean, rate))
+    target = rows[-1]["speaker_err"] if swap_rate is None else swap_rate
+    swapped, achieved = swap_speakers(clean, target)
+    save_transcript(swapped)
     for r in rows:
-        r["swap_rate"] = rate
+        r["swap_target"], r["swap_achieved"] = target, achieved
     return rows
 
 
@@ -52,7 +54,8 @@ def main() -> None:
         rows += build_meeting(mid, args.swap_rate)
         far = rows[-1]
         print(f"{mid}: headset WER {rows[-2]['wer']:.1%}, far-field WER {far['wer']:.1%}, "
-              f"far-field speaker err {far['speaker_err']:.1%}", flush=True)
+              f"far-field speaker err {far['speaker_err']:.1%}, swap achieved {far['swap_achieved']:.1%}",
+              flush=True)
 
     df = pd.DataFrame(rows)
     RESULTS.mkdir(parents=True, exist_ok=True)

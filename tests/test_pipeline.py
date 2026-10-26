@@ -1,3 +1,4 @@
+import pytest
 from core.config import Condition
 from core.transcript import Transcript, Turn, Word
 from evals.speaker_swap import swap_speakers
@@ -55,13 +56,31 @@ def test_align_flags_mishearing_and_speaker_mixup():
     assert stats["speaker_err"] == 1 / 9
 
 
-def test_speaker_swap_is_seeded_and_keeps_truth():
-    clean = Transcript(meeting_id="m", condition=Condition.CLEAN,
-                       turns=[turn(r, i * 5, "some words here") for i, r in
-                              enumerate(["PM", "ME", "UI", "ID"] * 5)])
-    none = swap_speakers(clean, rate=0.0)
-    every = swap_speakers(clean, rate=1.0)
-    assert [t.speaker for t in none.turns] == [t.speaker for t in clean.turns]
-    assert all(t.speaker != t.words[0].ref_speaker for t in every.turns)
-    assert swap_speakers(clean, 0.3).model_dump() == swap_speakers(clean, 0.3).model_dump()
+def _swap_clean() -> Transcript:
+    # 40 turns of varied length (1-6 words) so word share and turn share differ.
+    roles = ["PM", "ME", "UI", "ID"]
+    return Transcript(meeting_id="m", condition=Condition.CLEAN,
+                      turns=[turn(roles[i % 4], i * 10, " ".join(["w"] * (1 + i % 6))) for i in range(40)])
+
+
+def _relabelled_share(t: Transcript) -> float:
+    words = [(w, turn.speaker) for turn in t.turns for w in turn.words]
+    return sum(w.ref_speaker != spk for w, spk in words) / len(words)
+
+
+def test_speaker_swap_extremes_seeding_and_truth():
+    clean = _swap_clean()
+    none, r0 = swap_speakers(clean, rate=0.0)
+    every, r1 = swap_speakers(clean, rate=1.0)
+    assert r0 == 0 and [t.speaker for t in none.turns] == [t.speaker for t in clean.turns]
+    assert r1 == 1 and all(t.speaker != t.words[0].ref_speaker for t in every.turns)
+    assert swap_speakers(clean, 0.3)[0].model_dump() == swap_speakers(clean, 0.3)[0].model_dump()
     assert clean.turns[0].words[0].ref_speaker is None  # original untouched
+
+
+@pytest.mark.parametrize("target", [0.02, 0.05, 0.08, 0.15, 0.25])
+def test_speaker_swap_hits_intermediate_word_rates(target):
+    from evals.speaker_swap import TOLERANCE
+    swapped, achieved = swap_speakers(_swap_clean(), rate=target)
+    assert achieved == pytest.approx(_relabelled_share(swapped))  # reported = measured
+    assert abs(achieved - target) <= TOLERANCE  # one-word turns make every target reachable

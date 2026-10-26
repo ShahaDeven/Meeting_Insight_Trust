@@ -1,34 +1,121 @@
 # Meeting Insight Trust
 
-**Which meeting insights are safe to write to a CRM automatically, and which need a human?**
+**Which meeting insights are safe to write to a CRM automatically, and which need a person?**
 
-Meeting assistants extract decisions, action items, owners and numbers from calls and increasingly write them straight into systems of record. On real audio — accents, far-field room mics, crosstalk — some of those insights are wrong. This project measures *how often*, *why*, and *whether a trained risk score can route the risky ones to review*.
+Meeting assistants extract decisions, action items, owners and figures from calls and increasingly write them straight into systems of record. This project measures, on real meeting audio, how often those insights are wrong, why, and whether a risk score can route the risky ones to review. It is an offline evaluation on a public corpus with a static review console; it has not been tested against any vendor's production system.
 
-> 🚧 Work in progress. Results, charts and a live demo link will land here.
+## Findings
 
-## What it does
+All numbers are on 24 real meetings (6 four-meeting series, 12.1 hours per microphone) from the AMI corpus. 95% intervals resample whole recording series, because meetings in a series share a team, room and microphone.
 
-1. **Transcribes real meetings at three noise levels** — human transcript (clean), headset-mic ASR (light), far-field room-mic ASR (heavy) — from the [AMI Meeting Corpus](https://groups.inf.ed.ac.uk/ami/corpus/).
-2. **Extracts quote-backed insights** — decisions, action items with owners and deadlines, cost figures, open risks — each tied to a timestamped supporting quote.
-3. **Attributes every wrong insight** to a misheard word, a speaker mix-up, or a model mistake, using a counterfactual ladder (clean → speaker-swapped → headset → far-field).
-4. **Scores each insight's risk** with a small calibrated classifier and splits results into *auto-write* vs *needs review*.
-5. **Tracks project state across a 4-meeting series**, comparing re-summarization against a quote-backed evidence ledger.
+**1. On real speech-recognition output, a risk score earns its place on the expensive errors, not overall.**
+Evaluated only on headset and room-microphone ASR transcripts (643 insights, 19% judged wrong), the input a meeting bot actually receives:
 
-## Layout
+| Rank insights by | AUROC | Wrong caught when the riskiest 20% are reviewed | Wrong left among auto-writes |
+|---|---|---|---|
+| Trained risk score (logistic regression) | 0.72 | 48% | 12.1% |
+| The extractor's own confidence | 0.72 | 40% | 13.8% |
+| Speech-recognition confidence on the quote | 0.57 | 29% | 16.5% |
+
+Ranked overall, the trained score is **no better** than the extractor's self-reported confidence (paired AUROC difference +0.003, 95% CI −0.034 to +0.045). Its advantage is on errors that matter for a CRM write: at a 20% review budget it catches **50% of wrong owners, wrong figures, wrong decisions and wrong cost figures, against 34%** for the extractor's confidence (+16 points, 95% CI +5 to +28). Recognizer confidence, the obvious signal to gate on, is the weakest. The human-transcript and speaker-swap runs score higher (AUROC 0.79 and 0.81) and are kept out of these numbers as experimental controls.
+
+**2. An explicit write policy: auto-write, review or reject.**
+An insight is *rejected* if no quote in the transcript backs it, *held for review* if `risk × cost[type] ≥ 1` (expected cost of a wrong write exceeds one human review), and *auto-written* otherwise. Costs are a stated assumption in review-units: decision 5, action item 6, cost figure 8, open risk 2. On ASR output the policy reviews 33% of insights, catches 59% of wrong ones (94% of wrong owners) and leaves 11.4% wrong among automatic writes, down from 18.5%. The risk is the model's out-of-fold probability, **not post-hoc calibrated**; on held-out series it tracks observed error but runs low at the bottom (predicted 3%, observed 8%). See `risk/policy.py`.
+
+**3. Most wrong insights are the model's mistake, not the microphone's (exploratory).**
+The same meetings were extracted from four transcripts that differ in one thing at a time: human transcript 12.5% wrong [10.1, 15.3], speaker labels swapped 13.1%, headset ASR 17.7%, room-mic ASR 19.3% [15.4, 23.2]. Swapping speakers at each meeting's measured dose adds +0.6 points [−2.1, +2.9], indistinguishable from zero; the room microphone adds +6.2 [+2.8, +9.4]. The commonest error everywhere is a suggestion recorded as a decision. Noise damage is mostly non-local: wrong far-field insights are barely more likely than correct ones to have misheard words in their own quote (51% vs 44%), so the loss is elsewhere, such as a later reversal or a hedge that was not transcribed.
+
+**4. Quote-only memory freezes the record (preliminary, 3 series).**
+Keeping a project record across four meetings, judged on 100 human-verified facts after the last meeting:
+
+| Strategy | Correct (human / room-mic transcript) | Out of date | Never true |
+|---|---|---|---|
+| Evidence ledger (change only with a quote-backed insight) | 44% / 36% | 25–31% | 1–9% |
+| Re-summarize (rewrite the record each meeting) | 64% / 60% | 11–17% | 7–11% |
+| Re-summarize with a review gate (unquoted changes wait for a person) | 65% / 57% | 13–16% | 3–7% |
+
+Refusing changes without a quote leaves a quarter of facts stale, because people rarely state "that task is done" in a quotable sentence. The gate costs about two reviews per meeting. With three series, differences of a few points are within noise.
+
+## How far to trust the labels
+
+"Wrong" comes from a strict LLM judge (Claude Haiku) that reads each insight against the AMI **human** transcript around its quotes and is blind to the condition. It was audited against blind human labels three times, and all three are reported:
+
+| Audit | Rows | Agreement | Cohen's κ |
+|---|---|---|---|
+| First blind audit (rubric ambiguous about decisions and reversed facts) | 99 | 55% | — |
+| Blind test after the rubric was fixed (reviewer reports marking too fast) | 50 | 52% | 0.04 |
+| Final structured blind audit, pre-committed, judge labels hash-frozen | 29 | 66% (47–80%) | 0.27 |
+
+Agreement is fair, not strong. The judge is reliable when it says *correct* (14/16) and over-flags *wrong* (5/13), so it is a stricter reviewer than the human. There is one human rater, the final audit is small, and before it the rater was shown four rows where his marks contradicted the written rules. The hard calls, whether a suggestion was really agreed and whether a fact was later reversed, are policy, which is what should stay with people. A larger audit with a second rater is the main open item.
+
+## Method
+
+```mermaid
+flowchart LR
+  A[AMI audio<br/>headset + room mic] --> B[faster-whisper large-v3<br/>+ pyannote community-1]
+  B --> C[Align to human transcript<br/>map speakers to roles]
+  H[AMI human transcript] --> C
+  H --> S[Speaker-swap control<br/>word-level dose]
+  C --> E[Quote-backed extraction<br/>Claude Haiku]
+  S --> E
+  H --> E
+  E --> Q{Quote found<br/>in transcript?}
+  Q -- no --> R[Reject]
+  Q -- yes --> F[Risk features<br/>write-time only]
+  F --> M[Risk score<br/>logistic, leave-one-series-out]
+  M --> P{risk × cost ≥ 1?}
+  P -- yes --> V[Review]
+  P -- no --> W[Auto-write]
+  E --> J[Judge vs human transcript<br/>evaluation only]
+```
+
+- **Transcripts.** Four conditions per meeting: the AMI human transcript; the same words with a share of speaker turns relabelled to hit each meeting's measured far-field speaker-error rate (all 24 within ±0.5 points); and Whisper large-v3 on the Mix-Headset and Array1-01 room-microphone recordings with pyannote speaker labels. Normalized WER against the human transcript: headset 21.8%, room mic 30.3% (deletions dominate, mostly in overlapping speech).
+- **Speaker roles.** Diarization clusters are mapped to AMI roles by maximum time overlap with the human transcript. This is an oracle mapping (a live bot gets names from the meeting platform), so the remaining speaker errors are words placed in the wrong cluster.
+- **Extraction.** Decisions, action items (owner, deadline), cost figures and open risks, each with 1–3 quotes. The code locates every quote in the transcript and stores the transcript's own words and timestamps; insights whose quote cannot be found are rejected. It does not yet check that a found quote supports the claim's meaning.
+- **Risk model.** 22 features available at write time (insight type, owner, the extractor's confidence, quote match, recognizer confidence, hedge and agreement words, turn density). Nothing derived from the human transcript is used (a test enforces this). Logistic regression was fixed as the primary model in advance; XGBoost is a secondary check with series-grouped calibration folds.
+- **Memory.** Gold is a model-drafted, human-verified state table per series (the reviewer accepted 98 of 102 draft rows, deleted 2 and added 2); only 3 of 6 series have one.
+
+## Console
+
+`web/` is a static React review console over precomputed results: the meeting timeline with recognizer confidence and who spoke when, the transcript with low-confidence words marked, insights in *held for review / written automatically / rejected* lanes with their quotes, play-from-here audio and plain-language reasons, the project-memory comparison, and these findings. It includes the TS3003c moment where the room microphone splits "I don't have any information on pricing, so I'll have to ask the manufacturing department" between two speakers.
 
 ```
-core/       config, AMI meeting ids, JSONL I/O
-gpu/        RunPod script: faster-whisper + pyannote (word timestamps, confidence, speakers)
-pipeline/   ASR/diarization loaders, alignment to human transcripts
-extract/    insight schema, extractor, memory strategies
-evals/      scoring, error attribution, speaker-swap test
-risk/       features, training, calibration
-app/        Streamlit review console
-report/     charts and findings
+python -m app.export          # writes web/public/data/*.json and web/public/audio/*.mp3
+cd web && npm install && npm run dev
 ```
 
-All stages read and write JSONL, so any stage can be swapped for another team's pipeline.
+## Reproduce
+
+Requires Python 3.11 and Node 22. All commands run from the repo root; every stage reads and writes files under `data/`, so any stage can be rerun alone.
+
+| Step | Command | Needs | Cost / time (measured) |
+|---|---|---|---|
+| Speech recognition + speaker labels | `bash gpu/setup.sh && bash gpu/run.sh` on a CUDA 12.8 GPU pod | GPU, `HF_TOKEN` | $0.35, 16 min for 24 h of audio (RTX 5090) |
+| Annotations | Download `ami_public_manual_1.6.2.zip` from the AMI site into `data/ami/` | — | — |
+| Transcripts, alignment, swap control | `python -m pipeline.build` | — | ~30 s |
+| Extraction (3 clean runs) | `python -m extract.extractor --clean-runs 3` | `ANTHROPIC_API_KEY` | $0.004 and ~21 s per meeting transcript |
+| Judge labels | `python -m evals.judge` | API | $0.0025 per insights file |
+| Attribution | `python -m evals.attribution` | — | seconds |
+| Risk features, model, policy | `python -m risk.features && python -m risk.train && python -m risk.policy` | — | ~1 min |
+| Memory (3 strategies) + scoring | `python -m extract.memory_strategies && python -m evals.memory_score` | API | $0.80 total |
+| Console data | `python -m app.export` | ffmpeg | seconds |
+
+- **Models:** `claude-haiku-5-5` for extraction, judging and memory (effort medium; high for judging and matching), `claude-sonnet-5-5` once to draft the state tables; faster-whisper `large-v3`; pyannote `speaker-diarization-community-1` (pyannote.audio 4.0.7, CTranslate2 4.8.3, torch 2.8.0).
+- **Seeds and determinism:** speaker swap seeded per meeting; bootstraps seeded; Claude Haiku 5.5 does not accept a temperature setting, so extraction is repeated three times on clean transcripts to measure run-to-run variation (19% mean spread in insight count).
+- **Spend control:** every call is priced from its usage and logged to `data/results/llm_usage.jsonl`; a hard cap (`MAX_USD`, default $10) stops a run. Total for every experiment here: $3.04 of API calls plus $0.35 of GPU.
+- **What is committed:** code, tests and the console's precomputed `web/public/data`. Not committed: raw AMI audio and annotations, transcripts, model outputs and the console's audio (regenerate with the steps above).
+- **Tests:** `pytest -q` (no API key or corpus data needed); CI runs them and the web build on every push.
+
+## Limits
+
+- AMI meetings are product-design sessions, not sales calls; six series and 24 meetings are a small set and do not show generalization to other meeting types.
+- Whisper may have seen AMI in training, so its error rates here are likely optimistic.
+- Labels come from an LLM judge with fair agreement with one human rater (above).
+- The speaker swap is a dose-matched synthetic control (whole-turn relabels), not a replica of real diarization errors.
+- Attribution shares split error rates; mishearing and speaker mix-ups can affect the same insight.
+- Quote validation checks that a quote exists, not that it supports the claim.
+- Not validated on any vendor's product or data.
 
 ## Data and license
 
-Uses the AMI Meeting Corpus (Carletta et al., 2005), released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Raw audio is not redistributed; only short derived samples are included.
+AMI Meeting Corpus (Carletta et al., 2005). The corpus distribution states that its signals, transcriptions and released annotations are under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). This repository does not include raw corpus files. The console includes one meeting's audio (TS3003c, re-encoded at 24 kbps) and derived transcripts, redistributed under CC BY 4.0 with this attribution. Speech recognition: Whisper (MIT). Diarization: pyannote community-1 (CC BY 4.0).

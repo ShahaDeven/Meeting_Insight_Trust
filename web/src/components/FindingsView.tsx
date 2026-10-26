@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FindingsData } from "../types";
-import { pct } from "../types";
+import { TYPE_LABEL, pct } from "../types";
 
 const SERIES = [
   { key: "logistic", label: "Risk score", color: "var(--series-1)" },
@@ -114,45 +114,131 @@ function Ladder({ ladder }: { ladder: FindingsData["ladder"] }) {
 
 export default function FindingsView({ findings }: { findings: FindingsData }) {
   const f = findings;
-  const tbl = Object.fromEntries(f.risk.table.map((r) => [r.score, r]));
+  const D = f.risk.deploy;
+  const H = D.asr_headline;
   const cc = f.risk.catch_curve;
-  const at = (k: keyof typeof cc) => cc[k][10];
   const L = f.ladder;
+  const sign = (x: number, d = 3) => `${x >= 0 ? "+" : ""}${x.toFixed(d)}`;
+  const pts = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(0)}`;
+  const crit = H.critical_at_20;
+  const failures: Record<string, string> = {
+    owner: "Wrong owner", number: "Wrong figure or deadline", type: "Suggestion recorded as a decision",
+    content: "Not what was said, or later reversed", crm_critical: "CRM-critical (owner, figure, decision or cost)",
+  };
+  const condName: Record<string, string> = {
+    headset: "Headset ASR", farfield: "Room-mic ASR", clean: "Human transcript", speaker_swap: "Speaker swap",
+  };
+  const rejected = Object.values(D.rejected);
   return (
     <div className="findings" style={{ marginTop: 18 }}>
       <section className="finding">
         <div>
-          <h2>Recognizer confidence can’t tell you which insights are wrong</h2>
+          <h2>On real speech recognition, the risk score earns its place on the expensive errors</h2>
           <p>
-            Send the riskiest 20% of insights to a person and the risk score catches {pct(at("logistic"))} of
-            the wrong ones. Ranking by the extractor’s own confidence catches {pct(at("base_model_conf"))};
-            ranking by speech-recognition confidence on the quoted words catches {pct(at("base_quote_conf"))},
-            barely better than random.
+            These results use only headset and room-microphone transcripts ({H.n} insights, {pct(H.wrong_rate)} judged
+            wrong), the input a meeting bot actually gets. Ranked overall, the trained score is no better than the
+            extractor’s own confidence (AUROC {H.auroc.toFixed(2)} vs {H.auroc_base.toFixed(2)}; difference{" "}
+            {sign(H.gain_vs_base.auroc_gain)}, 95% CI {sign(H.gain_vs_base.auroc_gain_lo)} to{" "}
+            {sign(H.gain_vs_base.auroc_gain_hi)}).
           </p>
           <p>
-            The strongest signals are what kind of claim it is (action items without a named owner are riskiest)
-            and how sure the extractor was, not how clean the audio sounded. Auto-written insights go from{" "}
-            {pct(f.risk.base_wrong_rate, 1)} wrong to {pct(tbl.logistic["auto_err@20"], 0)}.
+            Where it helps is the errors that cost most in a CRM. Reviewing the riskiest 20%, it catches{" "}
+            {pct(crit.risk)} of wrong owners, wrong figures, wrong decisions and wrong cost figures, against{" "}
+            {pct(crit.base)} for the extractor’s confidence ({pts(crit.gain)} points, 95% CI {pts(crit.gain_lo)} to{" "}
+            {pts(crit.gain_hi)}). Recognizer confidence on the quoted words is the weakest signal of all
+            (AUROC {H.auroc_quote_conf.toFixed(2)}).
           </p>
           <table className="plain" style={{ marginTop: 8 }}>
-            <thead><tr><th>Ranking</th><th className="num">AUROC (95% CI)</th><th className="num">vs human labels</th></tr></thead>
+            <thead>
+              <tr><th>Review the riskiest 20%, ranked by</th><th className="num">Wrong caught</th>
+                <th className="num">Of reviewed, wrong</th><th className="num">Left in auto-writes</th></tr>
+            </thead>
             <tbody>
-              {SERIES.map((s) => (
-                <tr key={s.key}>
-                  <td>{s.label}</td>
-                  <td className="num">{tbl[s.key].auroc.toFixed(2)} ({tbl[s.key].auroc_lo.toFixed(2)}–{tbl[s.key].auroc_hi.toFixed(2)})</td>
-                  <td className="num">{f.risk.human_auroc[s.key].toFixed(2)}</td>
+              {([["Risk score", H.budget20], ["Extractor’s own confidence", H.budget20_base],
+                 ["Recognizer confidence", H.budget20_quote_conf]] as const).map(([name, m]) => (
+                <tr key={name}>
+                  <td>{name}</td>
+                  <td className="num">{pct(m.recall_wrong)}</td>
+                  <td className="num">{pct(m.precision_review)}</td>
+                  <td className="num">{pct(m.auto_error, 1)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           <p className="fine" style={{ marginTop: 8 }}>
-            {f.corpus.insights.toLocaleString()} insights from {f.corpus.meetings} meetings; every score is
-            for a meeting series the model never saw (leave-one-series-out). Only signals a live product has
-            at write time are used.
+            Every score is for a meeting series the model never saw (leave-one-series-out); the model (logistic
+            regression) was fixed in advance; intervals resample whole recording series; only signals a live product
+            has at write time are used. Against {f.risk.human_n} human-audited insights the ranking holds (AUROC{" "}
+            {f.risk.human_auroc.logistic.toFixed(2)} vs {f.risk.human_auroc.base_model_conf.toFixed(2)} vs{" "}
+            {f.risk.human_auroc.base_quote_conf.toFixed(2)}). The human transcript and speaker-swap runs are
+            experimental controls and are kept out of these numbers: they flatter the score (AUROC{" "}
+            {D.by_condition.find((c) => c.condition === "clean")?.auroc.toFixed(2)} on clean transcripts).
           </p>
         </div>
         <CatchCurve curve={cc} policy={0.2} />
+      </section>
+
+      <section className="finding">
+        <div>
+          <h2>An explicit write policy: auto-write, review or reject</h2>
+          <p>
+            An insight is rejected if no quote in the transcript backs it; held for review if its risk times the cost of
+            a wrong write of its type is at least one review; and written automatically otherwise. The costs are a stated
+            assumption, priced in reviews: decision {D.costs.decision}, action item {D.costs.action_item}, cost figure{" "}
+            {D.costs.cost_figure}, open risk {D.costs.open_risk}.
+          </p>
+          <p>
+            On ASR output this reviews {pct(H.policy.review_rate)} of insights, catches {pct(H.policy.recall_wrong)} of the
+            wrong ones and leaves {pct(H.policy.auto_error, 1)} wrong among automatic writes (from {pct(H.wrong_rate, 1)}).
+            It is strongest on owners; open risks are never held, because their stated cost is low.
+          </p>
+          <p className="fine">
+            The risk is the model’s out-of-fold probability. It is not post-hoc calibrated; on held-out ASR series it
+            tracks the observed error rate but runs low at the bottom (predicted {pct(D.asr_reliability[0].predicted)},
+            observed {pct(D.asr_reliability[0].observed)}). Rejected at extraction for lack of a quote:{" "}
+            {rejected.reduce((a, r) => a + r.rejected, 0)} of {rejected.reduce((a, r) => a + r.of, 0)} insights. Quote
+            matching does not yet check that a real quote supports the claim’s meaning.
+          </p>
+        </div>
+        <div>
+          <table className="plain">
+            <thead><tr><th>Insight type (ASR)</th><th className="num">n</th><th className="num">Wrong</th>
+              <th className="num">Reviewed</th><th className="num">Wrong caught</th><th className="num">Left in auto</th></tr></thead>
+            <tbody>
+              {D.asr_by_type.map((t) => (
+                <tr key={t.type}>
+                  <td>{TYPE_LABEL[t.type]}</td><td className="num">{t.n}</td><td className="num">{pct(t.wrong_rate)}</td>
+                  <td className="num">{pct(t.policy_review_rate)}</td><td className="num">{pct(t.policy_recall)}</td>
+                  <td className="num">{pct(t.policy_auto_error, 1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <table className="plain" style={{ marginTop: 16 }}>
+            <thead><tr><th>Kind of error (ASR)</th><th className="num">n</th><th className="num">Policy catches</th>
+              <th className="num">Risk top 20%</th><th className="num">Extractor top 20%</th></tr></thead>
+            <tbody>
+              {D.asr_by_failure.map((r) => (
+                <tr key={r.failure}>
+                  <td>{failures[r.failure] ?? r.failure}</td><td className="num">{r.wrong_insights}</td>
+                  <td className="num">{pct(r.caught_policy)}</td><td className="num">{pct(r["caught_logistic@20"])}</td>
+                  <td className="num">{pct(r["caught_base_model_conf@20"])}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <table className="plain" style={{ marginTop: 16 }}>
+            <thead><tr><th>Transcript</th><th>Role</th><th className="num">AUROC</th><th className="num">Extractor conf.</th></tr></thead>
+            <tbody>
+              {D.by_condition.map((c) => (
+                <tr key={c.condition}>
+                  <td>{condName[c.condition]}</td><td>{c.role === "deployment" ? "Deployment" : "Control"}</td>
+                  <td className="num">{c.auroc.toFixed(2)}</td><td className="num">{c.auroc_base.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="finding">
@@ -170,8 +256,12 @@ export default function FindingsView({ findings }: { findings: FindingsData }) {
             (a later reversal, a “maybe”) was lost.
           </p>
           <p className="fine">
-            Wrong = judged by a strict LLM reviewer reading the human transcript. That reviewer flags more than a
-            human does (see below); under a human reading the microphone effect shrinks to roughly +2 points.
+            Exploratory. Wrong = judged by a strict LLM reviewer reading the human transcript; it flags more than
+            a human does (see below), and under a human reading the microphone effect shrinks to roughly +2 points.
+            Speaker mix-ups were injected as whole-turn relabels at each meeting’s measured far-field dose
+            (within ±0.5 points): a dose-matched synthetic control, not a replica of real diarization errors.
+            The shares split rates, not exclusive causes; mishearing and mix-ups can hit the same insight.
+            Intervals resample whole recording series.
           </p>
         </div>
         <Ladder ladder={L} />

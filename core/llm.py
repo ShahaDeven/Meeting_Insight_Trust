@@ -5,6 +5,7 @@ README's cost-per-meeting figure comes from real calls, not estimates.
 """
 
 import json
+import os
 import threading
 import time
 
@@ -13,7 +14,9 @@ import anthropic
 from core.config import MAX_USD, PRICES, RESULTS
 
 USAGE_LOG = RESULTS / "llm_usage.jsonl"
-client = anthropic.Anthropic(max_retries=5)
+# Without a key (e.g. CI) the client is still constructible, so modules import cleanly;
+# any real call then fails loudly with an authentication error.
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY") or "not-set", max_retries=5)
 
 
 class BudgetExceeded(RuntimeError):

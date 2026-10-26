@@ -150,6 +150,7 @@ def judge_file(mid: str, stem: str, budget: Budget) -> dict:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--meetings", nargs="+")
+    p.add_argument("--conditions", nargs="+", help="only judge these conditions")
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--force", action="store_true")
     args = p.parse_args()
@@ -158,6 +159,8 @@ def main() -> None:
                    if not f.name.endswith(".rejected.jsonl"))
     if args.meetings:
         stems = [s for s in stems if s.split(".")[0] in args.meetings]
+    if args.conditions:
+        stems = [s for s in stems if s.split(".")[1] in args.conditions]
     todo = [s for s in stems if args.force or not (LABELS / f"{s}.judge.jsonl").exists()]
     print(f"{len(stems) - len(todo)} of {len(stems)} judged; running {len(todo)} with {JUDGE_MODEL}.")
 
